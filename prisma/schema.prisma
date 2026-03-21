@@ -1,0 +1,90 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Role {
+  id    Int    @id @default(autoincrement())
+  name  String
+  users User[]
+
+  @@map("roles")
+}
+
+model User {
+  id          String      @id @default(uuid())
+  firstName   String
+  lastName    String
+  phoneNumber String
+  password    String ? 
+  
+  roleId      Int
+  orders      Order[]
+  restaurant  Restaurant?
+  role        Role        @relation(fields: [roleId], references: [id])
+
+  @@map("users")
+}
+
+model Restaurant {
+  id          String     @id @default(uuid())
+  name        String
+  address     String
+  phoneNumber String
+  userId      String     @unique
+  menuItems   MenuItem[]
+  orders      Order[]
+  user        User       @relation(fields: [userId], references: [id])
+
+  @@map("restaurants")
+}
+
+model MenuItem {
+  id           String      @id @default(uuid())
+  name         String
+  price        Float
+  restaurantId String
+  orderItems   OrderItem[]
+  restaurant   Restaurant  @relation(fields: [restaurantId], references: [id])
+
+  @@map("menu_items")
+}
+
+model Order {
+  id           String      @id @default(uuid())
+  status       String
+  totalPrice   Float
+  userId       String
+  riderId      String?
+  restaurantId String
+  orderItems   OrderItem[]
+  restaurant   Restaurant  @relation(fields: [restaurantId], references: [id])
+  rider        Rider?      @relation(fields: [riderId], references: [id])
+  user         User        @relation(fields: [userId], references: [id])
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id         String   @id @default(uuid())
+  quantity   Int
+  price      Float
+  orderId    String
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+  order      Order    @relation(fields: [orderId], references: [id])
+}
+
+model Rider {
+  id          String  @id @default(uuid())
+  name        String
+  phoneNumber String
+  status      String
+  address     String
+  orders      Order[]
+}
