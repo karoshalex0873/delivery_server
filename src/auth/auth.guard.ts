@@ -1,28 +1,29 @@
-import { CanActivate, ExecutionContext, Global, Injectable } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Global, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
+import type { UserRequest } from 'src/types';
 // make it Global() if you want to use it across the entire app without importing it in every module
 @Global()
 @Injectable()
 export class AuthGuard implements CanActivate {
 
-  constructor(private JwtService: JwtService) { }
+  constructor(private jwtService: JwtService) { }
 
-  async canActivate(context: ExecutionContext,
-  ): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest<UserRequest>();
     const token = this.extractTokenFromHeader(request);
 
     if (!token) {
-      return false;
+      throw new UnauthorizedException('Missing authentication token');
     }
 
     try {
-      await this.JwtService.verifyAsync(token, {
+      const payload = await this.jwtService.verifyAsync(token, {
         secret: process.env.JWT_SECRET,
       });
-    } catch (error) {
-      return false;
+      request.user = payload;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired authentication token');
     }
     return true;
   }

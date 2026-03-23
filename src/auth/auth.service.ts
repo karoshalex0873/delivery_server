@@ -56,6 +56,11 @@ export class AuthService {
     // 1. Find the user by phone number
     const userExist = await this.prisma.user.findFirst({
       where: { phoneNumber: dto.phoneNumber },
+      include: {
+        role: {
+          select: { name: true },
+        },
+      },
     });
     // 2. If user not found, throw an error
     if (!userExist) {
@@ -74,6 +79,7 @@ export class AuthService {
     // 5. Generate access and refresh tokens (JWT) and return them to the client
     const accessToken = await this.jwtService.signAsync({
       sub: userExist.id,
+      role: userExist.role.name,
       roleId: userExist.roleId,
     });
 
