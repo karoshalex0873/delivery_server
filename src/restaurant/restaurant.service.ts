@@ -1,11 +1,13 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { LocationService } from 'src/location/location.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateMenuItemDto, CreateRestaurantDto, CreateRestaurantForUserDto, UpdateMenuItemDto, UpdateRestaurantDto } from './dto';
 
 @Injectable()
 export class RestaurantService {
   constructor(
-    private prisma: PrismaService
+    private prisma: PrismaService,
+    private locationService: LocationService,
   ) { }
 
   async createRestaurantForUser(dto: CreateRestaurantForUserDto) {
@@ -153,6 +155,42 @@ export class RestaurantService {
   async getMyOrders(userId: string) {
     const restaurant = await this.ensureRestaurantExists({ userId });
     return this.getOrdersByRestaurantId(restaurant.id);
+  }
+
+  async getMyOrderUserLocations(userId: string) {
+    const restaurant = await this.ensureRestaurantExists({ userId });
+    const paidOrders = await this.prisma.order.findMany({
+      where: {
+        restaurantId: restaurant.id,
+        paymentStatus: 'paid',
+      },
+      select: {
+        id: true,
+        status: true,
+        userId: true,
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            phoneNumber: true,
+          },
+        },
+      },
+      orderBy: {
+        id: 'desc',
+      },
+    });
+
+    const userLocations = this.locationService.getUserLocationsByIds(paidOrders.map((order) => order.userId));
+    const locationMap = new Map(userLocations.map((item) => [item.userId, item]));
+
+    return paidOrders.map((order) => ({
+      orderId: order.id,
+      orderStatus: order.status,
+      user: order.user,
+      location: locationMap.get(order.userId) ?? null,
+    }));
   }
 
   async updateMenuItemByRestaurantId(restaurantId: string, menuItemId: string, dto: UpdateMenuItemDto) {

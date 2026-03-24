@@ -100,6 +100,13 @@ export class RestaurantController {
     return this.restaurantService.getMyOrders(req.user.sub);
   }
 
+  @UseGuards(AuthGuard, RoleGuard)
+  @Roles('restaurant')
+  @Get('me/orders/user-locations')
+  getMyOrderUserLocations(@Req() req: UserRequest) {
+    return this.restaurantService.getMyOrderUserLocations(req.user.sub);
+  }
+
   // Endpoint for restaurant owners to update their own menu item
   @UseGuards(AuthGuard, RoleGuard)
   @Roles('restaurant')
