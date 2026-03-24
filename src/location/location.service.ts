@@ -11,6 +11,7 @@ type EntityLocation = {
 export class LocationService {
   private riderLocations = new Map<string, EntityLocation>();
   private userLocations = new Map<string, EntityLocation>();
+  private restaurantLocations = new Map<string, EntityLocation>();
 
   upsertRiderLocation(riderId: string, dto: UpsertLocationDto) {
     const location = this.createLocation(dto);
@@ -22,6 +23,12 @@ export class LocationService {
     const location = this.createLocation(dto);
     this.userLocations.set(userId, location);
     return { userId, ...location };
+  }
+
+  upsertRestaurantLocation(restaurantId: string, dto: UpsertLocationDto) {
+    const location = this.createLocation(dto);
+    this.restaurantLocations.set(restaurantId, location);
+    return { restaurantId, ...location };
   }
 
   getNearbyRiders(query: NearbyRidersQueryDto) {
@@ -50,6 +57,18 @@ export class LocationService {
 
   getUserLocation(userId: string) {
     return this.userLocations.get(userId) ?? null;
+  }
+
+  getRiderLocation(riderId: string) {
+    return this.riderLocations.get(riderId) ?? null;
+  }
+
+  getRestaurantLocation(restaurantId: string) {
+    return this.restaurantLocations.get(restaurantId) ?? null;
+  }
+
+  distanceKm(from: { latitude: number; longitude: number }, to: { latitude: number; longitude: number }) {
+    return this.haversineKm(from.latitude, from.longitude, to.latitude, to.longitude);
   }
 
   getUserLocationsByIds(userIds: string[]) {

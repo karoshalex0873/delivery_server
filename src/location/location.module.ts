@@ -8,6 +8,6 @@ import { LocationService } from './location.service';
   imports: [PrismaModule],
   controllers: [LocationController],
   providers: [LocationService, LocationGateway],
-  exports: [LocationService],
+  exports: [LocationService, LocationGateway],
 })
 export class LocationModule {}

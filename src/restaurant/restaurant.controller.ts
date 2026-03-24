@@ -5,6 +5,7 @@ import { Roles } from 'src/role/roles.decorator';
 import { RestaurantService } from './restaurant.service';
 import { CreateMenuItemDto, CreateRestaurantDto, CreateRestaurantForUserDto, MenuItemIdParamDto, RestaurantIdParamDto, RestaurantMenuParamsDto, UpdateMenuItemDto, UpdateRestaurantDto } from './dto';
 import type { UserRequest } from 'src/types';
+import { UpsertLocationDto } from 'src/location/dto';
 
 @Controller('restaurant')
 export class RestaurantController {
@@ -105,6 +106,20 @@ export class RestaurantController {
   @Get('me/orders/user-locations')
   getMyOrderUserLocations(@Req() req: UserRequest) {
     return this.restaurantService.getMyOrderUserLocations(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard, RoleGuard)
+  @Roles('restaurant')
+  @Post('me/location')
+  upsertMyLocation(@Req() req: UserRequest, @Body() dto: UpsertLocationDto) {
+    return this.restaurantService.upsertMyRestaurantLocation(req.user.sub, dto);
+  }
+
+  @UseGuards(AuthGuard, RoleGuard)
+  @Roles('restaurant')
+  @Get('me/location')
+  getMyLocation(@Req() req: UserRequest) {
+    return this.restaurantService.getMyRestaurantLocation(req.user.sub);
   }
 
   // Endpoint for restaurant owners to update their own menu item

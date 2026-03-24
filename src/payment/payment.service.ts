@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { LocationGateway } from 'src/location/location.gateway';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { DarajaStkCallbackDto, InitiateStkPushDto } from './dto';
 
@@ -6,7 +7,10 @@ import { DarajaStkCallbackDto, InitiateStkPushDto } from './dto';
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly locationGateway: LocationGateway,
+  ) {}
 
   async initiateStkPush(userId: string, dto: InitiateStkPushDto) {
     const order = await this.prisma.order.findFirst({
@@ -53,6 +57,8 @@ export class PaymentService {
         },
         include: this.orderInclude(),
       });
+
+      await this.safeEmitOrderOffer(updatedOrder.id);
 
       return {
         order: updatedOrder,
@@ -185,6 +191,7 @@ export class PaymentService {
       });
 
       this.logger.log(`Payment marked as paid for order=${order.id}`);
+      await this.safeEmitOrderOffer(order.id);
       return;
     }
 
@@ -339,5 +346,15 @@ export class PaymentService {
         },
       },
     };
+  }
+
+  private async safeEmitOrderOffer(orderId: string) {
+    try {
+      await this.locationGateway.emitOrderOfferForOrder(orderId);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to emit rider offer event for order=${orderId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
   }
 }

@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { LocationService } from 'src/location/location.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateMenuItemDto, CreateRestaurantDto, CreateRestaurantForUserDto, UpdateMenuItemDto, UpdateRestaurantDto } from './dto';
+import { UpsertLocationDto } from 'src/location/dto';
 
 @Injectable()
 export class RestaurantService {
@@ -191,6 +192,16 @@ export class RestaurantService {
       user: order.user,
       location: locationMap.get(order.userId) ?? null,
     }));
+  }
+
+  async upsertMyRestaurantLocation(userId: string, dto: UpsertLocationDto) {
+    const restaurant = await this.ensureRestaurantExists({ userId });
+    return this.locationService.upsertRestaurantLocation(restaurant.id, dto);
+  }
+
+  async getMyRestaurantLocation(userId: string) {
+    const restaurant = await this.ensureRestaurantExists({ userId });
+    return this.locationService.getRestaurantLocation(restaurant.id);
   }
 
   async updateMenuItemByRestaurantId(restaurantId: string, menuItemId: string, dto: UpdateMenuItemDto) {

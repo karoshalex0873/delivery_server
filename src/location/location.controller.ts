@@ -19,6 +19,11 @@ export class LocationController {
     return this.locationService.upsertUserLocation(req.user.sub, dto);
   }
 
+  @Post('restaurants/:restaurantId')
+  upsertRestaurantLocation(@Param('restaurantId') restaurantId: string, @Body() dto: UpsertLocationDto) {
+    return this.locationService.upsertRestaurantLocation(restaurantId, dto);
+  }
+
   @Post('users/:userId')
   upsertUserLocation(@Param('userId') userId: string, @Body() dto: UpsertLocationDto) {
     return this.locationService.upsertUserLocation(userId, dto);
