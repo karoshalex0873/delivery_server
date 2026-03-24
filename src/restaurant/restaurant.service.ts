@@ -124,7 +124,10 @@ export class RestaurantService {
     await this.ensureRestaurantExists({ id: restaurantId });
 
     return this.prisma.order.findMany({
-      where: { restaurantId },
+      where: {
+        restaurantId,
+        paymentStatus: 'paid',
+      },
       include: {
         user: {
           select: {

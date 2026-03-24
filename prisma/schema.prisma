@@ -57,16 +57,24 @@ model MenuItem {
 }
 
 model Order {
-  id           String      @id @default(uuid())
-  status       String
-  totalPrice   Float
-  userId       String
-  riderId      String?
-  restaurantId String
-  orderItems   OrderItem[]
-  restaurant   Restaurant  @relation(fields: [restaurantId], references: [id])
-  rider        Rider?      @relation(fields: [riderId], references: [id])
-  user         User        @relation(fields: [userId], references: [id])
+  id                   String      @id @default(uuid())
+  status               String
+  paymentStatus        String      @default("pending")
+  // payment method can be "mpesa",
+  paymentMethod        String?
+  checkoutRequestId    String?     @unique
+  merchantRequestId    String?
+  mpesaReceiptNumber   String?
+  paidAt               DateTime?
+  paymentFailureReason String?
+  totalPrice           Float
+  userId               String
+  riderId              String?
+  restaurantId         String
+  orderItems           OrderItem[]
+  restaurant           Restaurant  @relation(fields: [restaurantId], references: [id])
+  rider                Rider?      @relation(fields: [riderId], references: [id])
+  user                 User        @relation(fields: [userId], references: [id])
 
   @@map("orders")
 }
