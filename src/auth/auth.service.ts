@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { SignInDto, SignUpDto } from './dto';
+import { GoogleSignInDto, SignInDto, SignUpDto, UpdateProfileDto } from './dto';
 import * as argon2 from 'argon2';
 import { JwtService } from '@nestjs/jwt';
 
@@ -12,71 +12,72 @@ export class AuthService {
   ) { }
 
   async signUp(dto: SignUpDto) {
-    // 1. Check if the confirmPassword matches the password
     if (dto.confirmPassword && dto.password !== dto.confirmPassword) {
       throw new ConflictException('Passwords do not match');
     }
-    // 2. Ensure role is provided if
-    if (!dto.roleId) {
-      throw new BadRequestException('roleId is required');
-    }
-    // 3. Check if phone number is already registered
-    const existingUser = await this.prisma.user.findFirst({
-      where: { phoneNumber: dto.phoneNumber },
+
+    const existingByEmail = await this.prisma.user.findFirst({
+      where: { email: dto.email.toLowerCase() },
     });
 
-    if (existingUser) {
-      throw new ConflictException('Phone number already in use');
+    if (existingByEmail) {
+      throw new ConflictException('Email already in use');
     }
-    // 2. Hash the password using argon2
+
+    if (dto.phoneNumber) {
+      const existingByPhone = await this.prisma.user.findFirst({
+        where: { phoneNumber: dto.phoneNumber },
+      });
+
+      if (existingByPhone) {
+        throw new ConflictException('Phone number already in use');
+      }
+    }
+
     const hashedPassword = await argon2.hash(dto.password);
-    // 1. Create a new user in the database with the hashed password
     const user = await this.prisma.user.create({
       data: {
         firstName: dto.firstName,
         lastName: dto.lastName,
+        email: dto.email.toLowerCase(),
         phoneNumber: dto.phoneNumber,
         password: hashedPassword,
-        roleId: dto.roleId,
+        roleId: 1,
+        authProvider: 'local',
       },
       select: {
         id: true,
         firstName: true,
         lastName: true,
+        email: true,
         phoneNumber: true,
         roleId: true,
-      }
+      },
     });
     return user;
   }
 
   async signIn(dto: SignInDto) {
-    // TODO: Implement sign-in logic (validate credentials, generate JWT token)
-
-    // 1. Find the user by phone number
     const userExist = await this.prisma.user.findFirst({
-      where: { phoneNumber: dto.phoneNumber },
+      where: { email: dto.email.toLowerCase() },
       include: {
         role: {
           select: { name: true },
         },
       },
     });
-    // 2. If user not found, throw an error
     if (!userExist) {
-      throw new NotFoundException('invalid phone number or password');
+      throw new NotFoundException('Invalid email or password');
     }
     if (!userExist.password) {
-      throw new NotFoundException('Invalid phone number or password');
+      throw new NotFoundException('Invalid email or password');
     }
-    // 3. Verify the password using argon2 if they match, if not throw an error
     const passwordMatch = await argon2.verify(userExist.password, dto.password);
 
-    // 4. Ifsword password is incorrect, throw an error
     if (!passwordMatch) {
-      throw new NotFoundException('Invalid phone number or password');
+      throw new NotFoundException('Invalid email or password');
     }
-    // 5. Generate access and refresh tokens (JWT) and return them to the client
+
     const accessToken = await this.jwtService.signAsync({
       sub: userExist.id,
       role: userExist.role.name,
@@ -86,6 +87,62 @@ export class AuthService {
     return {
       accessToken,
       roleId: userExist.roleId,
+    };
+  }
+
+  async googleSignIn(dto: GoogleSignInDto) {
+    const email = dto.email.toLowerCase();
+
+    if (dto.phoneNumber) {
+      const existingPhone = await this.prisma.user.findFirst({
+        where: {
+          phoneNumber: dto.phoneNumber,
+          NOT: { email },
+        },
+      });
+
+      if (existingPhone) {
+        throw new ConflictException('Phone number already in use by another account');
+      }
+    }
+
+    const user = await this.prisma.user.upsert({
+      where: { email },
+      create: {
+        firstName: dto.firstName ?? 'Google',
+        lastName: dto.lastName ?? 'User',
+        email,
+        phoneNumber: dto.phoneNumber,
+        password: null,
+        googleId: dto.googleId ?? null,
+        authProvider: 'google',
+        roleId: 1,
+      },
+      update: {
+        firstName: dto.firstName ?? undefined,
+        lastName: dto.lastName ?? undefined,
+        phoneNumber: dto.phoneNumber ?? undefined,
+        googleId: dto.googleId ?? undefined,
+        authProvider: 'google',
+        roleId: 1,
+      },
+      include: {
+        role: {
+          select: { name: true },
+        },
+      },
+    });
+
+    const accessToken = await this.jwtService.signAsync({
+      sub: user.id,
+      role: user.role.name,
+      roleId: user.roleId,
+    });
+
+    return {
+      accessToken,
+      roleId: user.roleId,
+      authProvider: user.authProvider,
     };
   }
 
@@ -110,7 +167,9 @@ export class AuthService {
         id: true,
         firstName: true,
         lastName: true,
+        email: true,
         phoneNumber: true,
+        authProvider: true,
         roleId: true,
       },
     });
@@ -120,6 +179,72 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  async updateCurrentUser(userId: string | undefined, dto: UpdateProfileDto) {
+    if (!userId) {
+      throw new BadRequestException('User id is required');
+    }
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, phoneNumber: true },
+    });
+
+    if (!existingUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    const email = dto.email?.toLowerCase();
+
+    if (email && email !== existingUser.email) {
+      const emailOwner = await this.prisma.user.findFirst({
+        where: {
+          email,
+          NOT: { id: userId },
+        },
+        select: { id: true },
+      });
+
+      if (emailOwner) {
+        throw new ConflictException('Email already in use');
+      }
+    }
+
+    if (dto.phoneNumber && dto.phoneNumber !== existingUser.phoneNumber) {
+      const phoneOwner = await this.prisma.user.findFirst({
+        where: {
+          phoneNumber: dto.phoneNumber,
+          NOT: { id: userId },
+        },
+        select: { id: true },
+      });
+
+      if (phoneOwner) {
+        throw new ConflictException('Phone number already in use');
+      }
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        firstName: dto.firstName?.trim() || undefined,
+        lastName: dto.lastName?.trim() || undefined,
+        email,
+        phoneNumber: dto.phoneNumber?.trim() || null,
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phoneNumber: true,
+        authProvider: true,
+        roleId: true,
+      },
+    });
+
+    return updatedUser;
   }
 
 }

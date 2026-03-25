@@ -41,6 +41,13 @@ export class RiderController {
 
   @UseGuards(AuthGuard, RoleGuard)
   @Roles('rider')
+  @Get('me/assigned-orders')
+  getMyAssignedOrders(@Req() req: UserRequest) {
+    return this.riderService.getMyAssignedOrders(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard, RoleGuard)
+  @Roles('rider')
   @Post('orders/:orderId/accept')
   acceptOrder(@Req() req: UserRequest, @Param() params: RiderOrderParamDto) {
     return this.riderService.acceptOrder(req.user.sub, params.orderId);

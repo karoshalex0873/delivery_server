@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { PrismaClient } from 'generated/prisma/client';
 import { PrismaPg } from 'node_modules/@prisma/adapter-pg/dist/index.mjs';
+import * as argon2 from 'argon2';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({
@@ -12,6 +13,8 @@ const prisma = new PrismaClient({
 
 async function main(): Promise<void> {
   try {
+    const defaultPasswordHash = await argon2.hash('Password@123');
+
     // 1) Roles
     await prisma.role.createMany({
       data: [
@@ -29,7 +32,10 @@ async function main(): Promise<void> {
         data: {
           firstName: 'Wanjiku',
           lastName: 'Mwangi',
-          phoneNumber: '0712000001',
+          email: 'wanjiku.mwangi@quickbite.dev',
+          phoneNumber: '+254712000001',
+          password: defaultPasswordHash,
+          authProvider: 'local',
           roleId: 1,
         },
       }),
@@ -37,7 +43,10 @@ async function main(): Promise<void> {
         data: {
           firstName: 'Kamau',
           lastName: 'Githinji',
-          phoneNumber: '0712000002',
+          email: 'kamau.githinji@quickbite.dev',
+          phoneNumber: '+254712000002',
+          password: defaultPasswordHash,
+          authProvider: 'local',
           roleId: 1,
         },
       }),
@@ -45,7 +54,10 @@ async function main(): Promise<void> {
         data: {
           firstName: 'Muthoni',
           lastName: 'Njoroge',
-          phoneNumber: '0712000003',
+          email: 'muthoni.njoroge@quickbite.dev',
+          phoneNumber: '+254712000003',
+          password: defaultPasswordHash,
+          authProvider: 'local',
           roleId: 3,
         },
       }),
@@ -53,7 +65,10 @@ async function main(): Promise<void> {
         data: {
           firstName: 'Peter',
           lastName: 'Karanja',
-          phoneNumber: '0712000004',
+          email: 'peter.karanja@quickbite.dev',
+          phoneNumber: '+254712000004',
+          password: defaultPasswordHash,
+          authProvider: 'local',
           roleId: 4,
         },
       }),

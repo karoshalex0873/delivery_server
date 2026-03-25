@@ -41,4 +41,39 @@ export class OrdersController {
   ) {
     return this.ordersService.updateOrderStatusByRestaurantUserId(req.user.sub, params.id, dto);
   }
+
+  @UseGuards(AuthGuard, RoleGuard)
+  @Roles('restaurant')
+  @Patch(':id/restaurant/accept')
+  restaurantAccept(@Req() req: UserRequest, @Param() params: OrderIdParamDto) {
+    return this.ordersService.restaurantAcceptOrder(req.user.sub, params.id);
+  }
+
+  @UseGuards(AuthGuard, RoleGuard)
+  @Roles('restaurant')
+  @Patch(':id/restaurant/ready')
+  restaurantReady(@Req() req: UserRequest, @Param() params: OrderIdParamDto) {
+    return this.ordersService.restaurantMarkReady(req.user.sub, params.id);
+  }
+
+  @UseGuards(AuthGuard, RoleGuard)
+  @Roles('restaurant')
+  @Patch(':id/restaurant/sign-delivery-start')
+  restaurantSignDeliveryStart(@Req() req: UserRequest, @Param() params: OrderIdParamDto) {
+    return this.ordersService.restaurantSignDeliveryStart(req.user.sub, params.id);
+  }
+
+  @UseGuards(AuthGuard, RoleGuard)
+  @Roles('rider')
+  @Patch(':id/rider/sign-delivery-start')
+  riderSignDeliveryStart(@Req() req: UserRequest, @Param() params: OrderIdParamDto) {
+    return this.ordersService.riderSignDeliveryStart(req.user.sub, params.id);
+  }
+
+  @UseGuards(AuthGuard, RoleGuard)
+  @Roles('customer')
+  @Patch(':id/customer/confirm-delivered')
+  customerConfirmDelivered(@Req() req: UserRequest, @Param() params: OrderIdParamDto) {
+    return this.ordersService.customerConfirmDelivered(req.user.sub, params.id);
+  }
 }

@@ -1,6 +1,6 @@
 import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { SignInDto, SignUpDto } from './dto';
+import { GoogleSignInDto, SignInDto, SignUpDto, UpdateProfileDto } from './dto';
 import type { UserRequest } from 'src/types';
 import { AuthGuard } from './auth.guard';
 
@@ -23,6 +23,11 @@ export class AuthController {
     return this.authService.signIn(dto);
   }
 
+  @Post('signin/google')
+  googleSignIn(@Body() dto: GoogleSignInDto) {
+    return this.authService.googleSignIn(dto);
+  }
+
   // 3.Logout:
   @Post('logout')
   logout() {
@@ -41,6 +46,12 @@ export class AuthController {
   @Post('me')
   getCurrentUser(@Req() req: UserRequest) {
     return this.authService.getCurrentUser(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard)
+  @Post('me/update')
+  updateCurrentUser(@Req() req: UserRequest, @Body() dto: UpdateProfileDto) {
+    return this.authService.updateCurrentUser(req.user.sub, dto);
   }
 
 }

@@ -17,6 +17,8 @@ export const ORDER_STATUSES = [
   'accepted',
   'preparing',
   'ready_for_pickup',
+  'delivery_sign_restaurant',
+  'delivery_sign_rider',
   'out_for_delivery',
   'delivered',
   'cancelled',

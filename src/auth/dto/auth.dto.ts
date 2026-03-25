@@ -1,10 +1,5 @@
-// dto file for auth module
-// first name, last name, phone number, password with validation rules
-
-
-import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, Min } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
 export class SignUpDto {
-
   @IsString()
   @IsNotEmpty()
   firstName: string;
@@ -15,34 +10,77 @@ export class SignUpDto {
 
   @IsString()
   @IsNotEmpty()
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  @IsOptional()
   @Matches(/^\+254\d{9}$/, {
     message: 'phoneNumber must be in the format +254XXXXXXXXX',
   })
-  phoneNumber: string;
+  phoneNumber?: string;
 
   @IsString()
   @IsNotEmpty()
   password: string;
-
-  @IsInt()
-  @Min(1)
-  roleId: number;
 
   @IsString()
   @IsOptional()
   confirmPassword?: string;
 }
 
-// SignInDto
 export class SignInDto {
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\+254\d{9}$/, {
-    message: 'phoneNumber must be in the format +254XXXXXXXXX',
-  })
-  phoneNumber: string;
+  @IsEmail()
+  email: string;
 
   @IsString()
   @IsNotEmpty()
   password: string;
-}  
+}
+
+export class GoogleSignInDto {
+  @IsString()
+  @IsNotEmpty()
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  @IsOptional()
+  firstName?: string;
+
+  @IsString()
+  @IsOptional()
+  lastName?: string;
+
+  @IsString()
+  @IsOptional()
+  googleId?: string;
+
+  @IsString()
+  @IsOptional()
+  phoneNumber?: string;
+}
+
+export class UpdateProfileDto {
+  @IsString()
+  @IsOptional()
+  firstName?: string;
+
+  @IsString()
+  @IsOptional()
+  lastName?: string;
+
+  @IsString()
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^\+254\d{9}$/, {
+    message: 'phoneNumber must be in the format +254XXXXXXXXX',
+  })
+  phoneNumber?: string;
+}

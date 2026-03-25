@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { LocationGateway } from 'src/location/location.gateway';
 import { LocationService } from 'src/location/location.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { UpsertLocationDto } from 'src/location/dto';
@@ -11,6 +12,7 @@ export class RiderService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly locationService: LocationService,
+    private readonly locationGateway: LocationGateway,
   ) {}
 
   async getMe(userId: string) {
@@ -76,13 +78,15 @@ export class RiderService {
     return candidateOrders
       .filter((order) => !passedOrderIds.has(order.id))
       .map((order) => {
-        const restaurantLocation = this.locationService.getRestaurantLocation(order.restaurantId);
+        const storedRestaurantLocation = this.locationService.getRestaurantLocation(order.restaurantId);
         const customerLocation = this.locationService.getUserLocation(order.userId);
 
-        if (!restaurantLocation || !customerLocation) {
+        if (!customerLocation) {
           return null;
         }
 
+        const restaurantLocation = storedRestaurantLocation ?? customerLocation;
+        const isEstimated = !storedRestaurantLocation;
         const riderToRestaurantKm = this.locationService.distanceKm(riderLocation, restaurantLocation);
         const restaurantToCustomerKm = this.locationService.distanceKm(restaurantLocation, customerLocation);
 
@@ -94,6 +98,7 @@ export class RiderService {
           restaurantToCustomerKm: Number(restaurantToCustomerKm.toFixed(2)),
           restaurant: order.restaurant,
           customer: order.user,
+          isEstimated,
           restaurantLocation,
           customerLocation,
         };
@@ -102,6 +107,29 @@ export class RiderService {
       .filter((offer) => offer.riderToRestaurantKm <= radiusKm)
       .sort((a, b) => a.riderToRestaurantKm - b.riderToRestaurantKm)
       .slice(0, limit);
+  }
+
+  async getMyAssignedOrders(userId: string) {
+    const rider = await this.ensureRiderProfile(userId);
+    return this.prisma.order.findMany({
+      where: {
+        riderId: rider.id,
+        status: {
+          in: ['pending', 'accepted', 'ready_for_pickup', 'delivery_sign_restaurant', 'delivery_sign_rider', 'out_for_delivery'],
+        },
+      },
+      include: {
+        restaurant: {
+          select: { id: true, name: true, address: true, phoneNumber: true },
+        },
+        user: {
+          select: { id: true, firstName: true, lastName: true, phoneNumber: true },
+        },
+      },
+      orderBy: {
+        id: 'desc',
+      },
+    });
   }
 
   async acceptOrder(userId: string, orderId: string) {
@@ -130,7 +158,6 @@ export class RiderService {
       },
       data: {
         riderId: rider.id,
-        status: order.status === 'pending' ? 'accepted' : order.status,
       },
     });
 
@@ -139,6 +166,8 @@ export class RiderService {
     }
 
     this.passedOrdersByRider.get(rider.id)?.delete(orderId);
+
+    await this.locationGateway.emitOrderLifecycleForOrder(orderId, 'A rider was found to deliver your order.');
 
     return this.prisma.order.findUnique({
       where: { id: orderId },
@@ -178,14 +207,14 @@ export class RiderService {
     }
 
     let rider = await this.prisma.rider.findFirst({
-      where: { phoneNumber: user.phoneNumber },
+      where: { phoneNumber: user.phoneNumber || '' },
     });
 
     if (!rider) {
       rider = await this.prisma.rider.create({
         data: {
           name: `${user.firstName} ${user.lastName}`.trim(),
-          phoneNumber: user.phoneNumber,
+          phoneNumber: user.phoneNumber || '',
           status: 'offline',
           address: 'Unknown',
         },

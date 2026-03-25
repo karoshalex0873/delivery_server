@@ -59,6 +59,7 @@ export class PaymentService {
       });
 
       await this.safeEmitOrderOffer(updatedOrder.id);
+      await this.safeEmitOrderLifecycle(updatedOrder.id, 'Payment received. Creating your order.');
 
       return {
         order: updatedOrder,
@@ -192,6 +193,7 @@ export class PaymentService {
 
       this.logger.log(`Payment marked as paid for order=${order.id}`);
       await this.safeEmitOrderOffer(order.id);
+      await this.safeEmitOrderLifecycle(order.id, 'Payment received. Creating your order.');
       return;
     }
 
@@ -354,6 +356,16 @@ export class PaymentService {
     } catch (error) {
       this.logger.warn(
         `Failed to emit rider offer event for order=${orderId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  private async safeEmitOrderLifecycle(orderId: string, actorLog?: string) {
+    try {
+      await this.locationGateway.emitOrderLifecycleForOrder(orderId, actorLog);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to emit lifecycle event for order=${orderId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
     }
   }
