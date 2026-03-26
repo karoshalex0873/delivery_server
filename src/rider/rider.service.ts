@@ -16,7 +16,11 @@ export class RiderService {
   ) {}
 
   async getMe(userId: string) {
-    return this.ensureRiderProfile(userId);
+    const rider = await this.ensureRiderProfile(userId);
+    return {
+      ...rider,
+      costPerKm: this.locationService.getRiderShippingRatePerKm(rider.id),
+    };
   }
 
   async setAvailability(userId: string, status: 'online' | 'offline') {
@@ -29,7 +33,36 @@ export class RiderService {
 
   async upsertMyLocation(userId: string, dto: UpsertLocationDto) {
     const rider = await this.ensureRiderProfile(userId);
-    return this.locationService.upsertRiderLocation(rider.id, dto);
+    const location = this.locationService.upsertRiderLocation(rider.id, dto);
+
+    this.locationGateway.emitRiderLocationUpdated(location);
+
+    const activeOrders = await this.prisma.order.findMany({
+      where: {
+        riderId: rider.id,
+        paymentStatus: 'paid',
+        status: {
+          in: ['accepted', 'preparing', 'ready_for_pickup', 'delivery_sign_restaurant', 'delivery_sign_rider', 'out_for_delivery'],
+        },
+      },
+      select: { id: true },
+    });
+
+    for (const order of activeOrders) {
+      await this.locationGateway.emitOrderLifecycleForOrder(order.id);
+    }
+
+    return location;
+  }
+
+  async setShippingRate(userId: string, costPerKm: number) {
+    const rider = await this.ensureRiderProfile(userId);
+    const normalizedRate = this.locationService.setRiderShippingRatePerKm(rider.id, costPerKm);
+
+    return {
+      ...rider,
+      costPerKm: normalizedRate,
+    };
   }
 
   async getMyOrderOffers(userId: string, query: RiderOffersQueryDto) {
@@ -115,7 +148,7 @@ export class RiderService {
       where: {
         riderId: rider.id,
         status: {
-          in: ['pending', 'accepted', 'ready_for_pickup', 'delivery_sign_restaurant', 'delivery_sign_rider', 'out_for_delivery'],
+          in: ['pending', 'accepted', 'ready_for_pickup', 'delivery_sign_restaurant', 'delivery_sign_rider', 'out_for_delivery', 'delivery_signed_by_rider', 'delivered', 'cancelled'],
         },
       },
       include: {

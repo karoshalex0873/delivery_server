@@ -26,3 +26,11 @@ export class RiderOrderParamDto {
   @IsUUID()
   orderId: string;
 }
+
+export class RiderShippingRateDto {
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(1000)
+  costPerKm: number;
+}

@@ -31,6 +31,32 @@ type CustomerOrderSubscribePayload = {
   orderId: string;
 };
 
+type DeliveryDetails = {
+  estimatedMinutes: number | null;
+  distanceKm: number | null;
+  rider?: {
+    id: string;
+    name: string;
+    phoneNumber: string;
+  } | null;
+  deliveryLocation: {
+    label: string;
+    latitude: number | null;
+    longitude: number | null;
+    updatedAt: string | null;
+  };
+  riderLocation: {
+    latitude: number | null;
+    longitude: number | null;
+    updatedAt: string | null;
+  };
+  milestones: {
+    createdAt: string | null;
+    riderSignedDeliveredAt: string | null;
+    customerConfirmedDeliveredAt: string | null;
+  };
+};
+
 @WebSocketGateway({
   cors: {
     origin: [process.env.CLIENT_URL ?? 'http://localhost:5173', 'http://127.0.0.1:5173'],
@@ -39,6 +65,7 @@ type CustomerOrderSubscribePayload = {
 })
 export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(LocationGateway.name);
+  private readonly orderMilestones = new Map<string, { createdAt: string | null; riderSignedDeliveredAt: string | null; customerConfirmedDeliveredAt: string | null }>();
 
   @WebSocketServer()
   private server: Server;
@@ -86,6 +113,7 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
 
     client.join(this.customerOrderRoom(payload.orderId));
     this.logger.debug(`Socket ${client.id} subscribed to order room ${payload.orderId}`);
+    void this.emitOrderLifecycleForOrder(payload.orderId);
     return { ok: true, orderId: payload.orderId };
   }
 
@@ -108,7 +136,22 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
 
     if (payload.role === 'rider') {
       const riderLocation = this.locationService.upsertRiderLocation(payload.id, { latitude, longitude });
-      this.server.emit('location:rider:updated', riderLocation);
+      this.emitRiderLocationUpdated(riderLocation);
+      const activeOrders = await this.prisma.order.findMany({
+        where: {
+          riderId: payload.id,
+          paymentStatus: 'paid',
+          status: {
+            in: ['accepted', 'preparing', 'ready_for_pickup', 'delivery_sign_restaurant', 'delivery_sign_rider', 'out_for_delivery'],
+          },
+        },
+        select: { id: true },
+      });
+
+      for (const order of activeOrders) {
+        await this.emitOrderLifecycleForOrder(order.id);
+      }
+
       return { ok: true, type: 'rider', data: riderLocation };
     }
 
@@ -189,10 +232,17 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
   }
 
+  emitRiderLocationUpdated(location: { riderId: string; latitude: number; longitude: number; updatedAt: string }) {
+    this.server.emit('location:rider:updated', location);
+  }
+
   async emitOrderLifecycleForOrder(orderId: string, actorLog?: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
+        user: {
+          select: { id: true },
+        },
         restaurant: {
           select: { id: true, name: true, address: true, phoneNumber: true },
         },
@@ -210,6 +260,13 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
     const riderAssigned = Boolean(order.riderId);
 
     const lifecycle = this.buildLifecycle(order.status, restaurantAccepted, riderAssigned, actorLog);
+    const deliveryDetails = this.buildDeliveryDetails(
+      order.id,
+      order.paidAt ?? null,
+      order.status,
+      order.user.id,
+      order.rider ?? null,
+    );
 
     this.server.to(this.customerOrderRoom(order.id)).emit('order:lifecycle:update', {
       orderId: order.id,
@@ -220,7 +277,69 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
       logs: lifecycle.logs,
       restaurant: order.restaurant,
       rider: order.rider,
+      deliveryDetails,
     });
+  }
+
+  private buildDeliveryDetails(
+    orderId: string,
+    orderPaidAt: Date | null,
+    status: string,
+    userId: string,
+    rider: { id: string; name: string; phoneNumber: string } | null,
+  ): DeliveryDetails {
+    const customerLocation = this.locationService.getUserLocation(userId);
+    const riderLocation = rider ? this.locationService.getRiderLocation(rider.id) : null;
+
+    let distanceKm: number | null = null;
+    let estimatedMinutes: number | null = null;
+
+    if (customerLocation && riderLocation) {
+      distanceKm = Number(this.locationService.distanceKm(riderLocation, customerLocation).toFixed(2));
+      // Approximate ETA using urban speed assumptions (about 28km/h) plus handling buffer.
+      estimatedMinutes = Math.max(5, Math.round((distanceKm / 28) * 60) + 6);
+    }
+
+    const existingMilestones = this.orderMilestones.get(orderId) ?? {
+      createdAt: orderPaidAt?.toISOString() ?? null,
+      riderSignedDeliveredAt: null,
+      customerConfirmedDeliveredAt: null,
+    };
+
+    if (!existingMilestones.createdAt && orderPaidAt) {
+      existingMilestones.createdAt = orderPaidAt.toISOString();
+    }
+    if (status === 'delivery_signed_by_rider' && !existingMilestones.riderSignedDeliveredAt) {
+      existingMilestones.riderSignedDeliveredAt = new Date().toISOString();
+    }
+    if (status === 'delivered' && !existingMilestones.customerConfirmedDeliveredAt) {
+      existingMilestones.customerConfirmedDeliveredAt = new Date().toISOString();
+    }
+    this.orderMilestones.set(orderId, existingMilestones);
+
+    return {
+      estimatedMinutes,
+      distanceKm,
+      rider: rider
+        ? {
+            id: rider.id,
+            name: rider.name,
+            phoneNumber: rider.phoneNumber,
+          }
+        : null,
+      deliveryLocation: {
+        label: customerLocation ? 'Customer live location' : 'Customer location unavailable',
+        latitude: customerLocation?.latitude ?? null,
+        longitude: customerLocation?.longitude ?? null,
+        updatedAt: customerLocation?.updatedAt ?? null,
+      },
+      riderLocation: {
+        latitude: riderLocation?.latitude ?? null,
+        longitude: riderLocation?.longitude ?? null,
+        updatedAt: riderLocation?.updatedAt ?? null,
+      },
+      milestones: existingMilestones,
+    };
   }
 
   private restaurantRoom(restaurantId: string) {
@@ -242,6 +361,12 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
     if (status === 'delivered') {
       stage = 5;
       title = 'Delivered and Signed';
+    } else if (status === 'cancelled') {
+      stage = 1;
+      title = 'Order Canceled';
+    } else if (status === 'delivery_signed_by_rider') {
+      stage = 4;
+      title = 'Awaiting Customer Confirmation';
     } else if (status === 'out_for_delivery') {
       stage = 4;
       title = 'On the Move';
@@ -259,6 +384,10 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
 
     if (stage === 1) {
+      if (status === 'cancelled') {
+        logs.push('This order was canceled.');
+        return { stage, title, logs };
+      }
       logs.push(restaurantAccepted ? 'Restaurant has accepted your order and is ready to prepare.' : 'Waiting for restaurant acceptance.');
       logs.push(riderAssigned ? 'A rider was found to deliver your order.' : 'Searching for a nearby rider.');
       if (restaurantAccepted && riderAssigned) {
@@ -283,8 +412,13 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
 
     if (stage === 4) {
-      logs.push('Your order is on the move.');
-      logs.push('Rider is heading to your location.');
+      if (status === 'delivery_signed_by_rider') {
+        logs.push('Rider has marked this order as delivered.');
+        logs.push('Please review and confirm delivery from your app.');
+      } else {
+        logs.push('Your order is on the move.');
+        logs.push('Rider is heading to your location.');
+      }
     }
 
     if (stage === 5) {

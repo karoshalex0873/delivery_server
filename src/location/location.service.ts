@@ -12,6 +12,7 @@ export class LocationService {
   private riderLocations = new Map<string, EntityLocation>();
   private userLocations = new Map<string, EntityLocation>();
   private restaurantLocations = new Map<string, EntityLocation>();
+  private riderShippingRatePerKm = new Map<string, number>();
 
   upsertRiderLocation(riderId: string, dto: UpsertLocationDto) {
     const location = this.createLocation(dto);
@@ -67,6 +68,30 @@ export class LocationService {
     return this.restaurantLocations.get(restaurantId) ?? null;
   }
 
+  setRiderShippingRatePerKm(riderId: string, ratePerKm: number) {
+    const normalized = Math.max(0, Number(ratePerKm.toFixed(2)));
+    this.riderShippingRatePerKm.set(riderId, normalized);
+    return normalized;
+  }
+
+  getRiderShippingRatePerKm(riderId: string) {
+    const value = this.riderShippingRatePerKm.get(riderId);
+    return value ?? this.getDefaultShippingRatePerKm();
+  }
+
+  getEffectiveShippingRatePerKm(riderIds?: string[]) {
+    const ids = riderIds ?? [];
+    const configuredRates = ids
+      .map((riderId) => this.riderShippingRatePerKm.get(riderId))
+      .filter((rate): rate is number => typeof rate === 'number' && Number.isFinite(rate) && rate > 0);
+
+    if (configuredRates.length === 0) {
+      return this.getDefaultShippingRatePerKm();
+    }
+
+    return Math.min(...configuredRates);
+  }
+
   distanceKm(from: { latitude: number; longitude: number }, to: { latitude: number; longitude: number }) {
     return this.haversineKm(from.latitude, from.longitude, to.latitude, to.longitude);
   }
@@ -118,5 +143,13 @@ export class LocationService {
       Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
 
     return 2 * earthRadiusKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  private getDefaultShippingRatePerKm() {
+    const configured = Number(process.env.SHIPPING_RATE_PER_KM_DEFAULT ?? '40');
+    if (!Number.isFinite(configured) || configured <= 0) {
+      return 40;
+    }
+    return configured;
   }
 }

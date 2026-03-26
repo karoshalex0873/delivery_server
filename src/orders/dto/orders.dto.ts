@@ -20,6 +20,7 @@ export const ORDER_STATUSES = [
   'delivery_sign_restaurant',
   'delivery_sign_rider',
   'out_for_delivery',
+  'delivery_signed_by_rider',
   'delivered',
   'cancelled',
   'rejected',

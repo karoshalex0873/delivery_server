@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { LocationGateway } from 'src/location/location.gateway';
+import { LocationService } from 'src/location/location.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateOrderDto, UpdateOrderStatusDto } from './dto';
 
@@ -8,6 +9,7 @@ export class OrdersService {
   constructor(
     private prisma: PrismaService,
     private readonly locationGateway: LocationGateway,
+    private readonly locationService: LocationService,
   ) {}
 
   getCatalog() {
@@ -40,7 +42,20 @@ export class OrdersService {
       orderBy: {
         id: 'desc',
       },
-    });
+    }).then((orders) =>
+      orders.map((order) => {
+        const foodSubtotal = Number(
+          (order.orderItems?.reduce((sum, item) => sum + item.price, 0) ?? 0).toFixed(2),
+        );
+        const shippingCost = Number(Math.max(0, order.totalPrice - foodSubtotal).toFixed(2));
+        return {
+          ...order,
+          foodSubtotal,
+          shippingCost,
+          shippingRatePerKm: 40,
+        };
+      }),
+    );
   }
 
   async createOrder(userId: string, dto: CreateOrderDto) {
@@ -95,9 +110,21 @@ export class OrdersService {
       };
     });
 
-    const totalPrice = orderItems.reduce((sum, item) => sum + item.price, 0);
+    const foodTotal = orderItems.reduce((sum, item) => sum + item.price, 0);
 
-    return this.prisma.order.create({
+    const customerLocation = this.locationService.getUserLocation(userId);
+    const restaurantLocation = this.locationService.getRestaurantLocation(dto.restaurantId);
+    const shippingDistanceKm =
+      customerLocation && restaurantLocation
+        ? this.locationService.distanceKm(restaurantLocation, customerLocation)
+        : 0;
+
+    const ratePerKm = 40;
+    const chargeableDistanceKm = Math.max(1, shippingDistanceKm);
+    const shippingCost = Number((chargeableDistanceKm * ratePerKm).toFixed(2));
+    const totalPrice = Number((foodTotal + shippingCost).toFixed(2));
+
+    const createdOrder = await this.prisma.order.create({
       data: {
         status: 'awaiting_payment',
         paymentStatus: 'pending',
@@ -110,6 +137,14 @@ export class OrdersService {
       },
       include: this.orderInclude(),
     });
+
+    return {
+      ...createdOrder,
+      foodTotal: Number(foodTotal.toFixed(2)),
+      shippingCost,
+      shippingDistanceKm: Number(shippingDistanceKm.toFixed(2)),
+      shippingRatePerKm: ratePerKm,
+    };
   }
 
   async restaurantAcceptOrder(userId: string, orderId: string) {
@@ -222,6 +257,34 @@ export class OrdersService {
     return updated;
   }
 
+  async riderSignDelivered(userId: string, orderId: string) {
+    const rider = await this.ensureRiderProfileByUserId(userId);
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (order.riderId !== rider.id) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (order.status !== 'out_for_delivery') {
+      throw new BadRequestException('Order is not yet in delivery stage');
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: { status: 'delivery_signed_by_rider' },
+      include: this.orderInclude(),
+    });
+
+    await this.locationGateway.emitOrderLifecycleForOrder(order.id, 'Rider has signed delivery completion. Waiting for customer confirmation.');
+    return updated;
+  }
+
   async customerConfirmDelivered(userId: string, orderId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -231,8 +294,8 @@ export class OrdersService {
       throw new NotFoundException('Order not found');
     }
 
-    if (order.status !== 'out_for_delivery') {
-      throw new BadRequestException('Order is not yet in delivery stage');
+    if (order.status !== 'delivery_signed_by_rider') {
+      throw new BadRequestException('Customer can confirm delivery only after rider signs delivery completion');
     }
 
     const updated = await this.prisma.order.update({
@@ -245,6 +308,115 @@ export class OrdersService {
     return updated;
   }
 
+  async customerCancelOrder(userId: string, orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order || order.userId !== userId) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (!this.canCancelBeforeShipping(order.status)) {
+      throw new BadRequestException('Order can no longer be canceled because delivery already started');
+    }
+
+    if (order.status === 'cancelled') {
+      throw new BadRequestException('Order is already canceled');
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: 'cancelled',
+      },
+      include: this.orderInclude(),
+    });
+
+    await this.locationGateway.emitOrderLifecycleForOrder(order.id, 'Customer canceled this order.');
+    return updated;
+  }
+
+  async restaurantCancelOrder(userId: string, orderId: string) {
+    const order = await this.ensureRestaurantOrderAccess(userId, orderId);
+
+    if (!this.canCancelBeforeShipping(order.status)) {
+      throw new BadRequestException('Order can no longer be canceled because delivery already started');
+    }
+
+    if (order.status === 'cancelled') {
+      throw new BadRequestException('Order is already canceled');
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: 'cancelled',
+      },
+      include: this.orderInclude(),
+    });
+
+    await this.locationGateway.emitOrderLifecycleForOrder(order.id, 'Restaurant canceled this order.');
+    return updated;
+  }
+
+  async riderCancelOrder(userId: string, orderId: string) {
+    const rider = await this.ensureRiderProfileByUserId(userId);
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order || order.riderId !== rider.id) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (!['accepted', 'preparing', 'ready_for_pickup'].includes(order.status)) {
+      throw new BadRequestException('Rider can cancel only before delivery process starts');
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: 'cancelled',
+      },
+      include: this.orderInclude(),
+    });
+
+    await this.locationGateway.emitOrderLifecycleForOrder(order.id, 'Rider canceled this order before delivery start.');
+    return updated;
+  }
+
+  async customerDeleteOrder(userId: string, orderId: string) {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (!order || order.userId !== userId) {
+      throw new NotFoundException('Order not found');
+    }
+
+    this.ensureOrderCanBeDeleted(order.status);
+    await this.deleteOrderAndItems(order.id);
+
+    return { ok: true, message: 'Order deleted' };
+  }
+
+  async restaurantDeleteOrder(userId: string, orderId: string) {
+    const order = await this.ensureRestaurantOrderAccess(userId, orderId);
+    this.ensureOrderCanBeDeleted(order.status);
+    await this.deleteOrderAndItems(order.id);
+    return { ok: true, message: 'Order deleted' };
+  }
+
+  async riderDeleteOrder(userId: string, orderId: string) {
+    const rider = await this.ensureRiderProfileByUserId(userId);
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (!order || order.riderId !== rider.id) {
+      throw new NotFoundException('Order not found');
+    }
+
+    this.ensureOrderCanBeDeleted(order.status);
+    await this.deleteOrderAndItems(order.id);
+    return { ok: true, message: 'Order deleted' };
+  }
+
   async updateOrderStatusByRestaurantUserId(userId: string, orderId: string, dto: UpdateOrderStatusDto) {
     const order = await this.ensureRestaurantOrderAccess(userId, orderId);
 
@@ -252,7 +424,7 @@ export class OrdersService {
       throw new BadRequestException('This order cannot enter the restaurant workflow until payment is completed');
     }
 
-    if (dto.status === 'awaiting_payment' || dto.status === 'payment_failed') {
+    if (dto.status === 'awaiting_payment' || dto.status === 'payment_failed' || dto.status === 'delivery_signed_by_rider') {
       throw new BadRequestException('Restaurant cannot move an order back into payment states');
     }
 
@@ -285,6 +457,27 @@ export class OrdersService {
     }
 
     return order;
+  }
+
+  private canCancelBeforeShipping(status: string) {
+    return !['out_for_delivery', 'delivery_signed_by_rider', 'delivered'].includes(status);
+  }
+
+  private ensureOrderCanBeDeleted(status: string) {
+    if (!['cancelled', 'delivered', 'rejected'].includes(status)) {
+      throw new BadRequestException('Only canceled or completed orders can be deleted');
+    }
+  }
+
+  private async deleteOrderAndItems(orderId: string) {
+    await this.prisma.$transaction([
+      this.prisma.orderItem.deleteMany({
+        where: { orderId },
+      }),
+      this.prisma.order.delete({
+        where: { id: orderId },
+      }),
+    ]);
   }
 
   private async ensureRiderProfileByUserId(userId: string) {
@@ -339,4 +532,3 @@ export class OrdersService {
     };
   }
 }
-
