@@ -18,6 +18,7 @@ export interface RestaurantRecord {
   name: string;
   address?: string;
   phoneNumber?: string;
+  categories?: string[];
   userId: string; // Owner's user ID
   menuItems?: MenuItemRecord[];
   // orders?: OrderRecord[];
@@ -27,5 +28,8 @@ export interface MenuItemRecord {
   id: string;
   name: string;
   price: number;
+  category?: string;
+  imageUrl?: string | null;
+  availableCount?: number;
   restaurantId: string;
 }

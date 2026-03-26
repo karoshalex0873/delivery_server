@@ -59,3 +59,9 @@ export class OrderIdParamDto {
   @IsNotEmpty()
   id: string;
 }
+
+export class RestaurantIdParamDto {
+  @IsUUID()
+  @IsNotEmpty()
+  restaurantId: string;
+}

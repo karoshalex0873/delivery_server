@@ -40,6 +40,7 @@ model Restaurant {
   address     String
   description String?
   phoneNumber String
+  categories  String[]   @default([])
   userId      String     @unique
   menuItems   MenuItem[]
   orders      Order[]
@@ -52,6 +53,9 @@ model MenuItem {
   id           String      @id @default(uuid())
   name         String
   price        Float
+  category     String      @default("other")
+  imageUrl     String?
+  availableCount Int       @default(20)
   restaurantId String
   orderItems   OrderItem[]
   restaurant   Restaurant  @relation(fields: [restaurantId], references: [id])

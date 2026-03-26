@@ -6,16 +6,23 @@ import { CreateOrderDto, UpdateOrderStatusDto } from './dto';
 
 @Injectable()
 export class OrdersService {
+  private readonly shippingRatePerKm = 40;
+
   constructor(
     private prisma: PrismaService,
     private readonly locationGateway: LocationGateway,
     private readonly locationService: LocationService,
   ) {}
 
-  getCatalog() {
-    return this.prisma.restaurant.findMany({
+  async getCatalog() {
+    const restaurants = await this.prisma.restaurant.findMany({
       include: {
         menuItems: {
+          where: {
+            availableCount: {
+              gt: 0,
+            },
+          },
           orderBy: {
             name: 'asc',
           },
@@ -33,6 +40,11 @@ export class OrdersService {
         name: 'asc',
       },
     });
+
+    return restaurants.map((restaurant) => ({
+      ...restaurant,
+      location: this.locationService.getRestaurantLocation(restaurant.id),
+    }));
   }
 
   getOrdersByCustomerId(userId: string) {
@@ -103,6 +115,10 @@ export class OrdersService {
         throw new BadRequestException(`Menu item ${item.menuItemId} was not found`);
       }
 
+      if (item.quantity > menuItem.availableCount) {
+        throw new BadRequestException(`Only ${menuItem.availableCount} portions left for ${menuItem.name}`);
+      }
+
       return {
         menuItemId: item.menuItemId,
         quantity: item.quantity,
@@ -112,39 +128,48 @@ export class OrdersService {
 
     const foodTotal = orderItems.reduce((sum, item) => sum + item.price, 0);
 
-    const customerLocation = this.locationService.getUserLocation(userId);
-    const restaurantLocation = this.locationService.getRestaurantLocation(dto.restaurantId);
-    const shippingDistanceKm =
-      customerLocation && restaurantLocation
-        ? this.locationService.distanceKm(restaurantLocation, customerLocation)
-        : 0;
-
-    const ratePerKm = 40;
-    const chargeableDistanceKm = Math.max(1, shippingDistanceKm);
-    const shippingCost = Number((chargeableDistanceKm * ratePerKm).toFixed(2));
+    const quote = this.computeShippingQuote(userId, dto.restaurantId);
+    const shippingCost = quote.shippingCost;
     const totalPrice = Number((foodTotal + shippingCost).toFixed(2));
 
-    const createdOrder = await this.prisma.order.create({
-      data: {
-        status: 'awaiting_payment',
-        paymentStatus: 'pending',
-        totalPrice,
-        userId,
-        restaurantId: dto.restaurantId,
-        orderItems: {
-          create: orderItems,
+    const createdOrder = await this.prisma.$transaction(async (tx) => {
+      for (const item of orderItems) {
+        await tx.menuItem.update({
+          where: { id: item.menuItemId },
+          data: {
+            availableCount: {
+              decrement: item.quantity,
+            },
+          },
+        });
+      }
+
+      return tx.order.create({
+        data: {
+          status: 'awaiting_payment',
+          paymentStatus: 'pending',
+          totalPrice,
+          userId,
+          restaurantId: dto.restaurantId,
+          orderItems: {
+            create: orderItems,
+          },
         },
-      },
-      include: this.orderInclude(),
+        include: this.orderInclude(),
+      });
     });
 
     return {
       ...createdOrder,
       foodTotal: Number(foodTotal.toFixed(2)),
       shippingCost,
-      shippingDistanceKm: Number(shippingDistanceKm.toFixed(2)),
-      shippingRatePerKm: ratePerKm,
+      shippingDistanceKm: quote.distanceKm,
+      shippingRatePerKm: this.shippingRatePerKm,
     };
+  }
+
+  getShippingQuote(userId: string, restaurantId: string) {
+    return this.computeShippingQuote(userId, restaurantId);
   }
 
   async restaurantAcceptOrder(userId: string, orderId: string) {
@@ -529,6 +554,24 @@ export class OrdersService {
           menuItem: true,
         },
       },
+    };
+  }
+
+  private computeShippingQuote(userId: string, restaurantId: string) {
+    const customerLocation = this.locationService.getUserLocation(userId);
+    const restaurantLocation = this.locationService.getRestaurantLocation(restaurantId);
+    const actualDistanceKm =
+      customerLocation && restaurantLocation
+        ? this.locationService.distanceKm(restaurantLocation, customerLocation)
+        : null;
+    const chargeableDistanceKm = Math.max(1, actualDistanceKm ?? 0);
+    const shippingCost = Number((chargeableDistanceKm * this.shippingRatePerKm).toFixed(2));
+
+    return {
+      shippingCost,
+      distanceKm: actualDistanceKm != null ? Number(actualDistanceKm.toFixed(2)) : null,
+      ratePerKm: this.shippingRatePerKm,
+      estimated: actualDistanceKm == null,
     };
   }
 }

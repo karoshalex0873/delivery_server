@@ -1,4 +1,3 @@
-import { Logger } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -64,7 +63,6 @@ type DeliveryDetails = {
   },
 })
 export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  private readonly logger = new Logger(LocationGateway.name);
   private readonly orderMilestones = new Map<string, { createdAt: string | null; riderSignedDeliveredAt: string | null; customerConfirmedDeliveredAt: string | null }>();
 
   @WebSocketServer()
@@ -75,13 +73,9 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
     private readonly prisma: PrismaService,
   ) {}
 
-  handleConnection(client: Socket) {
-    this.logger.log(`Socket connected: ${client.id}`);
-  }
+  handleConnection(_client: Socket) {}
 
-  handleDisconnect(client: Socket) {
-    this.logger.log(`Socket disconnected: ${client.id}`);
-  }
+  handleDisconnect(_client: Socket) {}
 
   @SubscribeMessage('location:restaurant:subscribe')
   handleRestaurantSubscribe(@ConnectedSocket() client: Socket, @MessageBody() payload: RestaurantSubscribePayload) {
@@ -90,7 +84,6 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
 
     client.join(this.restaurantRoom(payload.restaurantId));
-    this.logger.debug(`Socket ${client.id} subscribed to restaurant room ${payload.restaurantId}`);
     return { ok: true, restaurantId: payload.restaurantId };
   }
 
@@ -101,7 +94,6 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
 
     client.join(this.riderRoom(payload.riderId));
-    this.logger.debug(`Socket ${client.id} subscribed to rider room ${payload.riderId}`);
     return { ok: true, riderId: payload.riderId };
   }
 
@@ -112,7 +104,6 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
 
     client.join(this.customerOrderRoom(payload.orderId));
-    this.logger.debug(`Socket ${client.id} subscribed to order room ${payload.orderId}`);
     void this.emitOrderLifecycleForOrder(payload.orderId);
     return { ok: true, orderId: payload.orderId };
   }

@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString, IsUUID, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsInt, IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 
 export class CreateRestaurantDto {
   @IsString()
@@ -20,6 +20,12 @@ export class CreateRestaurantDto {
   @IsNotEmpty()
   @MaxLength(30)
   phoneNumber: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(40)
+  @IsOptional()
+  categories?: string[];
 }
 
 export class CreateRestaurantForUserDto extends CreateRestaurantDto {
@@ -48,6 +54,12 @@ export class UpdateRestaurantDto {
   @IsOptional()
   @MaxLength(30)
   phoneNumber?: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(40)
+  @IsOptional()
+  categories?: string[];
 }
 
 export class CreateMenuItemDto {
@@ -59,6 +71,21 @@ export class CreateMenuItemDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @IsPositive()
   price: number;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(60)
+  category?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  imageUrl?: string;
+
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  availableCount?: number;
 }
 
 export class UpdateMenuItemDto {
@@ -71,6 +98,21 @@ export class UpdateMenuItemDto {
   @Min(0)
   @IsOptional()
   price?: number;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(60)
+  category?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  imageUrl?: string;
+
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  availableCount?: number;
 }
 
 export class RestaurantMenuParamsDto {

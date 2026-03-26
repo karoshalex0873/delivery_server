@@ -3,7 +3,7 @@ import { AuthGuard } from 'src/auth/auth.guard';
 import { RoleGuard } from 'src/role/role.guard';
 import { Roles } from 'src/role/roles.decorator';
 import type { UserRequest } from 'src/types';
-import { CreateOrderDto, OrderIdParamDto, UpdateOrderStatusDto } from './dto';
+import { CreateOrderDto, OrderIdParamDto, RestaurantIdParamDto, UpdateOrderStatusDto } from './dto';
 import { OrdersService } from './orders.service';
 
 @Controller('orders')
@@ -22,6 +22,13 @@ export class OrdersController {
   @Get('me')
   getMyOrders(@Req() req: UserRequest) {
     return this.ordersService.getOrdersByCustomerId(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard, RoleGuard)
+  @Roles('customer')
+  @Get('me/shipping-quote/:restaurantId')
+  getMyShippingQuote(@Req() req: UserRequest, @Param() params: RestaurantIdParamDto) {
+    return this.ordersService.getShippingQuote(req.user.sub, params.restaurantId);
   }
 
   @UseGuards(AuthGuard, RoleGuard)

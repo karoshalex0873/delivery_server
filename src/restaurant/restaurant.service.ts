@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { LocationService } from 'src/location/location.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateMenuItemDto, CreateRestaurantDto, CreateRestaurantForUserDto, UpdateMenuItemDto, UpdateRestaurantDto } from './dto';
@@ -6,6 +6,8 @@ import { UpsertLocationDto } from 'src/location/dto';
 
 @Injectable()
 export class RestaurantService {
+  private readonly logger = new Logger(RestaurantService.name);
+
   constructor(
     private prisma: PrismaService,
     private locationService: LocationService,
@@ -15,32 +17,68 @@ export class RestaurantService {
     await this.ensureUserCanOwnRestaurant(dto.userId);
     await this.ensureUserHasNoRestaurant(dto.userId);
 
-    return this.prisma.restaurant.create({
-      data: {
-        name: dto.name,
-        address: dto.address,
-        description: dto.description,
-        phoneNumber: dto.phoneNumber,
-        userId: dto.userId,
-      },
-      include: this.restaurantInclude(),
-    });
+    try {
+      return await this.prisma.restaurant.create({
+        data: {
+          name: dto.name,
+          address: dto.address,
+          description: dto.description,
+          phoneNumber: dto.phoneNumber,
+          categories: dto.categories ?? [],
+          userId: dto.userId,
+        },
+        include: this.restaurantInclude(),
+      });
+    } catch (error) {
+      if (this.isUnknownCategoriesArgument(error)) {
+        this.logger.warn('Prisma client does not support Restaurant.categories yet. Retrying create without categories.');
+        return this.prisma.restaurant.create({
+          data: {
+            name: dto.name,
+            address: dto.address,
+            description: dto.description,
+            phoneNumber: dto.phoneNumber,
+            userId: dto.userId,
+          },
+          include: this.restaurantInclude(),
+        });
+      }
+      throw error;
+    }
   }
 
   async createRestaurantByUserId(userId: string, dto: CreateRestaurantDto) {
     await this.ensureUserCanOwnRestaurant(userId);
     await this.ensureUserHasNoRestaurant(userId);
 
-    return this.prisma.restaurant.create({
-      data: {
-        name: dto.name,
-        address: dto.address,
-        description: dto.description,
-        phoneNumber: dto.phoneNumber,
-        userId,
-      },
-      include: this.restaurantInclude(),
-    });
+    try {
+      return await this.prisma.restaurant.create({
+        data: {
+          name: dto.name,
+          address: dto.address,
+          description: dto.description,
+          phoneNumber: dto.phoneNumber,
+          categories: dto.categories ?? [],
+          userId,
+        },
+        include: this.restaurantInclude(),
+      });
+    } catch (error) {
+      if (this.isUnknownCategoriesArgument(error)) {
+        this.logger.warn('Prisma client does not support Restaurant.categories yet. Retrying create without categories.');
+        return this.prisma.restaurant.create({
+          data: {
+            name: dto.name,
+            address: dto.address,
+            description: dto.description,
+            phoneNumber: dto.phoneNumber,
+            userId,
+          },
+          include: this.restaurantInclude(),
+        });
+      }
+      throw error;
+    }
   }
 
   getAllRestaurants() {
@@ -62,22 +100,50 @@ export class RestaurantService {
 
   async updateRestaurantById(id: string, dto: UpdateRestaurantDto) {
     await this.ensureRestaurantExists({ id });
-
-    return this.prisma.restaurant.update({
-      where: { id },
-      data: this.buildRestaurantUpdateData(dto),
-      include: this.restaurantInclude(),
-    });
+    const data = this.buildRestaurantUpdateData(dto);
+    const dataWithoutCategories = this.buildRestaurantUpdateData(dto, { includeCategories: false });
+    try {
+      return await this.prisma.restaurant.update({
+        where: { id },
+        data,
+        include: this.restaurantInclude(),
+      });
+    } catch (error) {
+      if (this.isUnknownCategoriesArgument(error)) {
+        this.logger.warn(`Prisma client does not support Restaurant.categories yet. Retrying update without categories for restaurant=${id}.`);
+        return this.prisma.restaurant.update({
+          where: { id },
+          data: dataWithoutCategories,
+          include: this.restaurantInclude(),
+        });
+      }
+      throw error;
+    }
   }
 
   async updateRestaurantByUserId(userId: string, dto: UpdateRestaurantDto) {
     const existingRestaurant = await this.ensureRestaurantExists({ userId });
-
-    return this.prisma.restaurant.update({
-      where: { id: existingRestaurant.id },
-      data: this.buildRestaurantUpdateData(dto),
-      include: this.restaurantInclude(),
-    });
+    const data = this.buildRestaurantUpdateData(dto);
+    const dataWithoutCategories = this.buildRestaurantUpdateData(dto, { includeCategories: false });
+    try {
+      return await this.prisma.restaurant.update({
+        where: { id: existingRestaurant.id },
+        data,
+        include: this.restaurantInclude(),
+      });
+    } catch (error) {
+      if (this.isUnknownCategoriesArgument(error)) {
+        this.logger.warn(
+          `Prisma client does not support Restaurant.categories yet. Retrying update without categories for restaurant=${existingRestaurant.id}.`,
+        );
+        return this.prisma.restaurant.update({
+          where: { id: existingRestaurant.id },
+          data: dataWithoutCategories,
+          include: this.restaurantInclude(),
+        });
+      }
+      throw error;
+    }
   }
 
   async deleteRestaurantById(id: string) {
@@ -96,6 +162,9 @@ export class RestaurantService {
       data: {
         name: dto.name,
         price: dto.price,
+        category: dto.category ?? 'other',
+        imageUrl: dto.imageUrl,
+        availableCount: dto.availableCount ?? 20,
         restaurantId,
       },
     });
@@ -224,6 +293,7 @@ export class RestaurantService {
 
   async deleteMenuItemByRestaurantId(restaurantId: string, menuItemId: string) {
     await this.ensureRestaurantMenuItem(restaurantId, menuItemId);
+    await this.ensureMenuItemCanBeDeleted(menuItemId);
 
     return this.prisma.menuItem.delete({
       where: { id: menuItemId },
@@ -232,6 +302,7 @@ export class RestaurantService {
 
   async deleteMenuItemByUserId(userId: string, menuItemId: string) {
     const menuItem = await this.ensureOwnedMenuItem(userId, menuItemId);
+    await this.ensureMenuItemCanBeDeleted(menuItem.id);
 
     return this.prisma.menuItem.delete({
       where: { id: menuItem.id },
@@ -293,6 +364,18 @@ export class RestaurantService {
     return menuItem;
   }
 
+  private async ensureMenuItemCanBeDeleted(menuItemId: string) {
+    const orderItemCount = await this.prisma.orderItem.count({
+      where: { menuItemId },
+    });
+
+    if (orderItemCount > 0) {
+      throw new BadRequestException(
+        'This menu item is used in previous orders and cannot be deleted. Set its availableCount to 0 to hide it from customers.',
+      );
+    }
+  }
+
   private async ensureUserCanOwnRestaurant(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -322,19 +405,31 @@ export class RestaurantService {
     }
   }
 
-  private buildRestaurantUpdateData(dto: UpdateRestaurantDto) {
+  private buildRestaurantUpdateData(
+    dto: UpdateRestaurantDto,
+    options?: { includeCategories?: boolean },
+  ) {
+    const includeCategories = options?.includeCategories ?? true;
     return {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.address !== undefined ? { address: dto.address } : {}),
       ...(dto.description !== undefined ? { description: dto.description } : {}),
       ...(dto.phoneNumber !== undefined ? { phoneNumber: dto.phoneNumber } : {}),
+      ...(includeCategories && dto.categories !== undefined ? { categories: dto.categories } : {}),
     };
+  }
+
+  private isUnknownCategoriesArgument(error: unknown) {
+    return error instanceof Error && error.message.includes('Unknown argument `categories`');
   }
 
   private buildMenuItemUpdateData(dto: UpdateMenuItemDto) {
     return {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.price !== undefined ? { price: dto.price } : {}),
+      ...(dto.category !== undefined ? { category: dto.category } : {}),
+      ...(dto.imageUrl !== undefined ? { imageUrl: dto.imageUrl } : {}),
+      ...(dto.availableCount !== undefined ? { availableCount: dto.availableCount } : {}),
     };
   }
 
