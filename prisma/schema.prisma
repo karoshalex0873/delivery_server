@@ -39,6 +39,8 @@ model Restaurant {
   name        String
   address     String
   description String?
+  imageUrl    String?
+  rating      Float      @default(4.2)
   phoneNumber String
   categories  String[]   @default([])
   userId      String     @unique
@@ -101,6 +103,7 @@ model Rider {
   name        String
   phoneNumber String
   status      String
+  availabilityStatus String @default("inactive")
   address     String
   orders      Order[]
 }

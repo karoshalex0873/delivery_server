@@ -6,6 +6,11 @@ export class RiderAvailabilityDto {
   status: 'online' | 'offline';
 }
 
+export class RiderActivityDto {
+  @IsIn(['active', 'inactive'])
+  availabilityStatus: 'active' | 'inactive';
+}
+
 export class RiderOffersQueryDto {
   @IsOptional()
   @Type(() => Number)

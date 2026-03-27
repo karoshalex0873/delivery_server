@@ -1,4 +1,4 @@
-import { ArrayMaxSize, IsArray, IsInt, IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString, IsUUID, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsInt, IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 
 export class CreateRestaurantDto {
   @IsString()
@@ -15,6 +15,17 @@ export class CreateRestaurantDto {
   @IsOptional()
   @MaxLength(500)
   description?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  imageUrl?: string;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(5)
+  @IsOptional()
+  rating?: number;
 
   @IsString()
   @IsNotEmpty()
@@ -49,6 +60,17 @@ export class UpdateRestaurantDto {
   @IsOptional()
   @MaxLength(500)
   description?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  imageUrl?: string;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(5)
+  @IsOptional()
+  rating?: number;
 
   @IsString()
   @IsOptional()

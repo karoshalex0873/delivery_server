@@ -4,7 +4,7 @@ import { UpsertLocationDto } from 'src/location/dto';
 import { RoleGuard } from 'src/role/role.guard';
 import { Roles } from 'src/role/roles.decorator';
 import type { UserRequest } from 'src/types';
-import { RiderAvailabilityDto, RiderOffersQueryDto, RiderOrderParamDto, RiderShippingRateDto } from './dto';
+import { RiderActivityDto, RiderAvailabilityDto, RiderOffersQueryDto, RiderOrderParamDto, RiderShippingRateDto } from './dto';
 import { RiderService } from './rider.service';
 
 @Controller('rider')
@@ -23,6 +23,13 @@ export class RiderController {
   @Patch('me/availability')
   setAvailability(@Req() req: UserRequest, @Body() dto: RiderAvailabilityDto) {
     return this.riderService.setAvailability(req.user.sub, dto.status);
+  }
+
+  @UseGuards(AuthGuard, RoleGuard)
+  @Roles('rider')
+  @Patch('me/activity')
+  setActivity(@Req() req: UserRequest, @Body() dto: RiderActivityDto) {
+    return this.riderService.setActivity(req.user.sub, dto.availabilityStatus);
   }
 
   @UseGuards(AuthGuard, RoleGuard)

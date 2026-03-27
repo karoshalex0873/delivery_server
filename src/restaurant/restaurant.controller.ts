@@ -36,6 +36,11 @@ export class RestaurantController {
     return this.restaurantService.getAllRestaurants();
   }
 
+  @Get('public/home-feed')
+  getPublicHomeFeed() {
+    return this.restaurantService.getPublicHomeFeed();
+  }
+
   // Endpoint for restaurant owners to get their own restaurant details
   @UseGuards(AuthGuard, RoleGuard)
   @Roles('restaurant')

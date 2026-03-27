@@ -17,6 +17,9 @@ export interface RestaurantRecord {
   id: string;
   name: string;
   address?: string;
+  description?: string | null;
+  imageUrl?: string | null;
+  rating?: number;
   phoneNumber?: string;
   categories?: string[];
   userId: string; // Owner's user ID

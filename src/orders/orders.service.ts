@@ -179,8 +179,8 @@ export class OrdersService {
       throw new BadRequestException('Order must be paid before restaurant can accept');
     }
 
-    if (['delivered', 'cancelled', 'rejected'].includes(order.status)) {
-      throw new BadRequestException('This order cannot be accepted in its current state');
+    if (order.status !== 'pending') {
+      throw new BadRequestException('Order can be accepted only when pending');
     }
 
     const updated = await this.prisma.order.update({
@@ -200,7 +200,7 @@ export class OrdersService {
       throw new BadRequestException('Order must be paid before preparation workflow');
     }
 
-    if (!['accepted', 'preparing', 'ready_for_pickup', 'delivery_sign_restaurant', 'delivery_sign_rider'].includes(order.status)) {
+    if (!['accepted', 'preparing'].includes(order.status)) {
       throw new BadRequestException('Order must be accepted/preparing before marking ready');
     }
 
@@ -220,11 +220,11 @@ export class OrdersService {
       throw new BadRequestException('Assign a rider before starting delivery');
     }
 
-    if (!['ready_for_pickup', 'delivery_sign_rider', 'delivery_sign_restaurant', 'out_for_delivery'].includes(order.status)) {
+    if (!['ready_for_pickup', 'delivery_sign_rider'].includes(order.status)) {
       throw new BadRequestException('Order is not ready for delivery start signatures');
     }
 
-    const nextStatus = order.status === 'delivery_sign_rider' || order.status === 'out_for_delivery'
+    const nextStatus = order.status === 'delivery_sign_rider'
       ? 'out_for_delivery'
       : 'delivery_sign_restaurant';
 
@@ -258,11 +258,11 @@ export class OrdersService {
       throw new NotFoundException('Order not found');
     }
 
-    if (!['ready_for_pickup', 'delivery_sign_restaurant', 'delivery_sign_rider', 'out_for_delivery'].includes(order.status)) {
+    if (!['ready_for_pickup', 'delivery_sign_restaurant'].includes(order.status)) {
       throw new BadRequestException('Order is not ready for delivery start signatures');
     }
 
-    const nextStatus = order.status === 'delivery_sign_restaurant' || order.status === 'out_for_delivery'
+    const nextStatus = order.status === 'delivery_sign_restaurant'
       ? 'out_for_delivery'
       : 'delivery_sign_rider';
 
@@ -417,8 +417,19 @@ export class OrdersService {
       throw new NotFoundException('Order not found');
     }
 
-    this.ensureOrderCanBeDeleted(order.status);
+    if (!['cancelled', 'delivered', 'rejected'].includes(order.status)) {
+      if (!this.canCancelBeforeShipping(order.status)) {
+        throw new BadRequestException('Order can no longer be deleted because delivery already started');
+      }
+
+      await this.prisma.order.update({
+        where: { id: order.id },
+        data: { status: 'cancelled' },
+      });
+    }
+
     await this.deleteOrderAndItems(order.id);
+    await this.locationGateway.emitOrderLifecycleForOrder(order.id, 'Order deleted by customer.');
 
     return { ok: true, message: 'Order deleted' };
   }
@@ -453,6 +464,8 @@ export class OrdersService {
       throw new BadRequestException('Restaurant cannot move an order back into payment states');
     }
 
+    this.validateRestaurantWorkflowTransition(order.status, dto.status);
+
     const updated = await this.prisma.order.update({
       where: { id: orderId },
       data: {
@@ -486,6 +499,25 @@ export class OrdersService {
 
   private canCancelBeforeShipping(status: string) {
     return !['out_for_delivery', 'delivery_signed_by_rider', 'delivered'].includes(status);
+  }
+
+  private validateRestaurantWorkflowTransition(currentStatus: string, nextStatus: string) {
+    const allowedByRestaurant = new Set(['accepted', 'preparing', 'ready_for_pickup', 'cancelled']);
+    if (!allowedByRestaurant.has(nextStatus)) {
+      throw new BadRequestException('Restaurant cannot set this status directly');
+    }
+
+    const allowedTransitions: Record<string, string[]> = {
+      pending: ['accepted', 'cancelled'],
+      accepted: ['preparing', 'ready_for_pickup', 'cancelled'],
+      preparing: ['ready_for_pickup', 'cancelled'],
+      ready_for_pickup: ['ready_for_pickup'],
+    };
+
+    const allowed = allowedTransitions[currentStatus] ?? [];
+    if (!allowed.includes(nextStatus)) {
+      throw new BadRequestException(`Invalid restaurant transition from ${currentStatus} to ${nextStatus}`);
+    }
   }
 
   private ensureOrderCanBeDeleted(status: string) {
@@ -546,6 +578,7 @@ export class OrdersService {
           id: true,
           name: true,
           address: true,
+          imageUrl: true,
           phoneNumber: true,
         },
       },

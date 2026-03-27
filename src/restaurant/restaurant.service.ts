@@ -4,6 +4,27 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateMenuItemDto, CreateRestaurantDto, CreateRestaurantForUserDto, UpdateMenuItemDto, UpdateRestaurantDto } from './dto';
 import { UpsertLocationDto } from 'src/location/dto';
 
+type HomeCategory = {
+  name: string;
+  description: string;
+  image: string;
+};
+
+type HomeTopDish = {
+  name: string;
+  restaurant: string;
+  price: string;
+  eta: string;
+  image: string;
+};
+
+type HomePopularRestaurant = {
+  name: string;
+  bestDish: string;
+  rating: number;
+  image: string;
+};
+
 @Injectable()
 export class RestaurantService {
   private readonly logger = new Logger(RestaurantService.name);
@@ -23,6 +44,8 @@ export class RestaurantService {
           name: dto.name,
           address: dto.address,
           description: dto.description,
+          imageUrl: dto.imageUrl,
+          rating: dto.rating,
           phoneNumber: dto.phoneNumber,
           categories: dto.categories ?? [],
           userId: dto.userId,
@@ -37,6 +60,8 @@ export class RestaurantService {
             name: dto.name,
             address: dto.address,
             description: dto.description,
+            imageUrl: dto.imageUrl,
+            rating: dto.rating,
             phoneNumber: dto.phoneNumber,
             userId: dto.userId,
           },
@@ -57,6 +82,8 @@ export class RestaurantService {
           name: dto.name,
           address: dto.address,
           description: dto.description,
+          imageUrl: dto.imageUrl,
+          rating: dto.rating,
           phoneNumber: dto.phoneNumber,
           categories: dto.categories ?? [],
           userId,
@@ -71,6 +98,8 @@ export class RestaurantService {
             name: dto.name,
             address: dto.address,
             description: dto.description,
+            imageUrl: dto.imageUrl,
+            rating: dto.rating,
             phoneNumber: dto.phoneNumber,
             userId,
           },
@@ -96,6 +125,62 @@ export class RestaurantService {
 
   async getRestaurantByUserId(userId: string) {
     return this.ensureRestaurantExists({ userId });
+  }
+
+  async getPublicHomeFeed() {
+    const [restaurants, dishSales, restaurantSales] = await Promise.all([
+      this.prisma.restaurant.findMany({
+        include: {
+          menuItems: {
+            where: {
+              availableCount: {
+                gt: 0,
+              },
+            },
+            orderBy: {
+              name: 'asc',
+            },
+          },
+        },
+      }),
+      this.prisma.orderItem.groupBy({
+        by: ['menuItemId'],
+        where: {
+          order: {
+            paymentStatus: 'paid',
+          },
+        },
+        _sum: {
+          quantity: true,
+        },
+      }),
+      this.prisma.order.groupBy({
+        by: ['restaurantId'],
+        where: {
+          paymentStatus: 'paid',
+        },
+        _count: {
+          _all: true,
+        },
+      }),
+    ]);
+
+    const dishSalesByMenuItem = new Map(
+      dishSales.map((row) => [row.menuItemId, row._sum.quantity ?? 0]),
+    );
+    const restaurantSalesById = new Map(
+      restaurantSales.map((row) => [row.restaurantId, row._count._all]),
+    );
+
+    const categories = this.buildHomeCategories(restaurants);
+    const topDishes = this.buildHomeTopDishes(restaurants, dishSalesByMenuItem);
+    const popularRestaurants = this.buildHomePopularRestaurants(restaurants, dishSalesByMenuItem, restaurantSalesById);
+
+    return {
+      categories,
+      topDishes,
+      popularRestaurants,
+    };
   }
 
   async updateRestaurantById(id: string, dto: UpdateRestaurantDto) {
@@ -414,6 +499,8 @@ export class RestaurantService {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.address !== undefined ? { address: dto.address } : {}),
       ...(dto.description !== undefined ? { description: dto.description } : {}),
+      ...(dto.imageUrl !== undefined ? { imageUrl: dto.imageUrl } : {}),
+      ...(dto.rating !== undefined ? { rating: dto.rating } : {}),
       ...(dto.phoneNumber !== undefined ? { phoneNumber: dto.phoneNumber } : {}),
       ...(includeCategories && dto.categories !== undefined ? { categories: dto.categories } : {}),
     };
@@ -445,6 +532,162 @@ export class RestaurantService {
         },
       },
     };
+  }
+
+  private buildHomeCategories(
+    restaurants: Array<{
+      categories: string[];
+      menuItems: Array<{ category: string }>;
+    }>,
+  ): HomeCategory[] {
+    const categoryScore = new Map<string, number>();
+    const dishImages = this.getFallbackDishImages();
+
+    for (const restaurant of restaurants) {
+      for (const category of restaurant.categories ?? []) {
+        const value = category.trim();
+        if (!value) {
+          continue;
+        }
+        categoryScore.set(value, (categoryScore.get(value) ?? 0) + 3);
+      }
+
+      for (const item of restaurant.menuItems) {
+        const value = item.category?.trim();
+        if (!value) {
+          continue;
+        }
+        categoryScore.set(value, (categoryScore.get(value) ?? 0) + 1);
+      }
+    }
+
+    const sorted = [...categoryScore.entries()]
+      .sort((a, b) => {
+        if (b[1] !== a[1]) {
+          return b[1] - a[1];
+        }
+        return a[0].localeCompare(b[0]);
+      })
+      .slice(0, 6);
+
+    return sorted.map(([name], index) => ({
+      name,
+      description: `Popular ${name.toLowerCase()} picks from nearby restaurants.`,
+      image: dishImages[index % dishImages.length],
+    }));
+  }
+
+  private buildHomeTopDishes(
+    restaurants: Array<{
+      name: string;
+      menuItems: Array<{ id: string; name: string; price: number; availableCount: number; imageUrl: string | null }>;
+    }>,
+    dishSalesByMenuItem: Map<string, number>,
+  ): HomeTopDish[] {
+    const allMenuItems = restaurants.flatMap((restaurant) =>
+      restaurant.menuItems.map((item) => ({
+        ...item,
+        restaurantName: restaurant.name,
+        sold: dishSalesByMenuItem.get(item.id) ?? 0,
+      })),
+    );
+
+    const ranked = [...allMenuItems]
+      .sort((a, b) => {
+        if (b.sold !== a.sold) {
+          return b.sold - a.sold;
+        }
+        if (b.availableCount !== a.availableCount) {
+          return b.availableCount - a.availableCount;
+        }
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 4);
+
+    const fallbackDishImages = this.getFallbackDishImages();
+
+    return ranked.map((item, index) => ({
+      name: item.name,
+      restaurant: item.restaurantName,
+      price: `KSh ${Math.round(item.price)}`,
+      eta: `${18 + index * 3}-${28 + index * 3} min`,
+      image: item.imageUrl || fallbackDishImages[index % fallbackDishImages.length],
+    }));
+  }
+
+  private buildHomePopularRestaurants(
+    restaurants: Array<{
+      id: string;
+      name: string;
+      imageUrl: string | null;
+      rating: number;
+      menuItems: Array<{ id: string; name: string }>;
+    }>,
+    dishSalesByMenuItem: Map<string, number>,
+    restaurantSalesById: Map<string, number>,
+  ): HomePopularRestaurant[] {
+    const fallbackRestaurantImages = this.getFallbackRestaurantImages();
+
+    const ranked = [...restaurants]
+      .map((restaurant) => {
+        const paidOrders = restaurantSalesById.get(restaurant.id) ?? 0;
+        const bestDish = [...restaurant.menuItems]
+          .sort((a, b) => {
+            const soldDiff = (dishSalesByMenuItem.get(b.id) ?? 0) - (dishSalesByMenuItem.get(a.id) ?? 0);
+            if (soldDiff !== 0) {
+              return soldDiff;
+            }
+            return a.name.localeCompare(b.name);
+          })[0]
+          ?.name;
+
+        return {
+          id: restaurant.id,
+          name: restaurant.name,
+          imageUrl: restaurant.imageUrl,
+          rating: restaurant.rating,
+          paidOrders,
+          menuCount: restaurant.menuItems.length,
+          bestDish: bestDish ?? "Chef special",
+        };
+      })
+      .sort((a, b) => {
+        if (b.paidOrders !== a.paidOrders) {
+          return b.paidOrders - a.paidOrders;
+        }
+        if (b.menuCount !== a.menuCount) {
+          return b.menuCount - a.menuCount;
+        }
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 4);
+
+    return ranked.map((restaurant, index) => ({
+      name: restaurant.name,
+      bestDish: restaurant.bestDish,
+      rating: Number(restaurant.rating.toFixed(1)),
+      image: restaurant.imageUrl || fallbackRestaurantImages[index % fallbackRestaurantImages.length],
+    }));
+  }
+
+  private getFallbackDishImages() {
+    return [
+      'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=900&q=80',
+      'https://images.unsplash.com/photo-1563379091339-03246963d96c?auto=format&fit=crop&w=900&q=80',
+      'https://images.unsplash.com/photo-1604908176997-431fe4ca8c7f?auto=format&fit=crop&w=900&q=80',
+      'https://images.unsplash.com/photo-1543353071-087092ec393a?auto=format&fit=crop&w=900&q=80',
+      'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=900&q=80',
+      'https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&w=900&q=80',
+    ];
+  }
+
+  private getFallbackRestaurantImages() {
+    return [
+      'https://images.unsplash.com/photo-1559339352-11d035aa65de?auto=format&fit=crop&w=1000&q=80',
+      'https://images.unsplash.com/photo-1552566626-52f8b828add9?auto=format&fit=crop&w=1000&q=80',
+      'https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=1000&q=80',
+      'https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&w=1000&q=80',
+    ];
   }
 
 }

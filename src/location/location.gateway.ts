@@ -184,7 +184,12 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
       },
     });
 
-    if (!order || order.paymentStatus !== 'paid' || order.riderId) {
+    if (
+      !order ||
+      order.paymentStatus !== 'paid' ||
+      order.riderId ||
+      !['accepted', 'preparing', 'ready_for_pickup'].includes(order.status)
+    ) {
       return;
     }
 
@@ -197,9 +202,13 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
     const isEstimated = !storedRestaurantLocation;
 
     const onlineRiders = await this.prisma.rider.findMany({
-      where: { status: 'online' },
+      where: { status: 'online', availabilityStatus: 'active' },
       select: { id: true, name: true },
     });
+
+    let nearestRiderId: string | null = null;
+    let nearestRiderDistance = Number.POSITIVE_INFINITY;
+    let nearestRiderToCustomerDistance = Number.POSITIVE_INFINITY;
 
     for (const rider of onlineRiders) {
       const riderLocation = this.locationService.getRiderLocation(rider.id);
@@ -208,19 +217,27 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
       }
 
       const riderToRestaurantKm = this.locationService.distanceKm(riderLocation, restaurantLocation);
-      const restaurantToCustomerKm = this.locationService.distanceKm(restaurantLocation, customerLocation);
-
-      this.server.to(this.riderRoom(rider.id)).emit('rider:order-offer', {
-        orderId: order.id,
-        orderStatus: order.status,
-        totalPrice: order.totalPrice,
-        riderToRestaurantKm: Number(riderToRestaurantKm.toFixed(2)),
-        restaurantToCustomerKm: Number(restaurantToCustomerKm.toFixed(2)),
-        isEstimated,
-        restaurant: order.restaurant,
-        customer: order.user,
-      });
+      if (riderToRestaurantKm < nearestRiderDistance) {
+        nearestRiderDistance = riderToRestaurantKm;
+        nearestRiderId = rider.id;
+        nearestRiderToCustomerDistance = this.locationService.distanceKm(restaurantLocation, customerLocation);
+      }
     }
+
+    if (!nearestRiderId) {
+      return;
+    }
+
+    this.server.to(this.riderRoom(nearestRiderId)).emit('rider:order-offer', {
+      orderId: order.id,
+      orderStatus: order.status,
+      totalPrice: order.totalPrice,
+      riderToRestaurantKm: Number(nearestRiderDistance.toFixed(2)),
+      restaurantToCustomerKm: Number(nearestRiderToCustomerDistance.toFixed(2)),
+      isEstimated,
+      restaurant: order.restaurant,
+      customer: order.user,
+    });
   }
 
   emitRiderLocationUpdated(location: { riderId: string; latitude: number; longitude: number; updatedAt: string }) {
