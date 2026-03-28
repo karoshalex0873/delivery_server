@@ -13,7 +13,7 @@ const prisma = new PrismaClient({
 
 async function main(): Promise<void> {
   try {
-    const defaultPasswordHash = await argon2.hash('Password@123');
+    const adminPasswordHash = await argon2.hash('Admin123');
 
     // 1) Roles
     await prisma.role.createMany({
@@ -26,167 +26,24 @@ async function main(): Promise<void> {
       skipDuplicates: true,
     });
 
-    // 2) Users (Linked to roles)
-    const [customerA, customerB, restaurantOwnerA, adminUser] = await Promise.all([
-      prisma.user.create({
-        data: {
-          firstName: 'Wanjiku',
-          lastName: 'Mwangi',
-          email: 'wanjiku.mwangi@quickbite.dev',
-          phoneNumber: '+254712000001',
-          password: defaultPasswordHash,
-          authProvider: 'local',
-          roleId: 1,
-        },
-      }),
-      prisma.user.create({
-        data: {
-          firstName: 'Kamau',
-          lastName: 'Githinji',
-          email: 'kamau.githinji@quickbite.dev',
-          phoneNumber: '+254712000002',
-          password: defaultPasswordHash,
-          authProvider: 'local',
-          roleId: 1,
-        },
-      }),
-      prisma.user.create({
-        data: {
-          firstName: 'Muthoni',
-          lastName: 'Njoroge',
-          email: 'muthoni.njoroge@quickbite.dev',
-          phoneNumber: '+254712000003',
-          password: defaultPasswordHash,
-          authProvider: 'local',
-          roleId: 3,
-        },
-      }),
-      prisma.user.create({
-        data: {
-          firstName: 'Peter',
-          lastName: 'Karanja',
-          email: 'peter.karanja@quickbite.dev',
-          phoneNumber: '+254712000004',
-          password: defaultPasswordHash,
-          authProvider: 'local',
-          roleId: 4,
-        },
-      }),
-    ]);
-
-    // 3) Riders
-    const [riderA, riderB] = await Promise.all([
-      prisma.rider.create({
-        data: {
-          name: 'Nduta Gitahi',
-          phoneNumber: '0712000011',
-          status: 'online',
-          address: 'Nyeri Town',
-        },
-      }),
-      prisma.rider.create({
-        data: {
-          name: 'Mwangi Kariuki',
-          phoneNumber: '0712000012',
-          status: 'offline',
-          address: 'Karatina, Nyeri',
-        },
-      }),
-    ]);
-
-    // 4) Restaurants
-    const [restaurantA, restaurantB] = await Promise.all([
-      prisma.restaurant.create({
-        data: {
-          name: 'Nyeri Nyama Choma',
-          address: 'Ngara, Nyeri',
-          phoneNumber: '0712000101',
-          userId: restaurantOwnerA.id,
-        },
-      }),
-      prisma.restaurant.create({
-        data: {
-          name: 'Mutura Express',
-          address: 'Kamakwa, Nyeri',
-          phoneNumber: '0712000102',
-          userId: adminUser.id,
-        },
-      }),
-    ]);
-
-    // 5) Menu items
-    const [menuItemsA, menuItemsB] = await Promise.all([
-      prisma.menuItem.createMany({
-        data: [
-          { name: 'Nyama Choma', price: 500, restaurantId: restaurantA.id },
-          { name: 'Irio', price: 200, restaurantId: restaurantA.id },
-          { name: 'Sukumawiki', price: 150, restaurantId: restaurantA.id },
-        ],
-      }),
-      prisma.menuItem.createMany({
-        data: [
-          { name: 'Mutura', price: 150, restaurantId: restaurantB.id },
-          { name: 'Githeri', price: 100, restaurantId: restaurantB.id },
-          { name: 'Mahindi Choma', price: 80, restaurantId: restaurantB.id },
-        ],
-      }),
-    ]);
-
-    // Fetch menu items for linking
-    const [restaurantAMenu, restaurantBMenu] = await Promise.all([
-      prisma.menuItem.findMany({ where: { restaurantId: restaurantA.id } }),
-      prisma.menuItem.findMany({ where: { restaurantId: restaurantB.id } }),
-    ]);
-
-    // 6) Orders (link users, restaurants, and optionally riders)
-    const orderA = await prisma.order.create({
-      data: {
-        status: 'pending',
-        totalPrice: 850,
-        userId: customerA.id,
-        restaurantId: restaurantA.id,
-        riderId: riderA.id,
+    // 2) Admin user only
+    await prisma.user.upsert({
+      where: { email: 'admin@gmail.com' },
+      update: {
+        firstName: 'Admin',
+        lastName: 'User',
+        password: adminPasswordHash,
+        authProvider: 'local',
+        roleId: 4,
       },
-    });
-
-    const orderB = await prisma.order.create({
-      data: {
-        status: 'delivered',
-        totalPrice: 330,
-        userId: customerB.id,
-        restaurantId: restaurantB.id,
-        riderId: null,
+      create: {
+        firstName: 'Admin',
+        lastName: 'User',
+        email: 'admin@gmail.com',
+        password: adminPasswordHash,
+        authProvider: 'local',
+        roleId: 4,
       },
-    });
-
-    // 7) Order items (linked to orders and menu items)
-    await prisma.orderItem.createMany({
-      data: [
-        {
-          orderId: orderA.id,
-          menuItemId: restaurantAMenu[0].id,
-          quantity: 1,
-          price: restaurantAMenu[0].price,
-        },
-        {
-          orderId: orderA.id,
-          menuItemId: restaurantAMenu[1].id,
-          quantity: 1,
-          price: restaurantAMenu[1].price,
-        },
-        {
-          orderId: orderB.id,
-          menuItemId: restaurantBMenu[0].id,
-          quantity: 1,
-          price: restaurantBMenu[0].price,
-        },
-        {
-          orderId: orderB.id,
-          menuItemId: restaurantBMenu[1].id,
-          quantity: 1,
-          price: restaurantBMenu[1].price,
-        },
-      ],
     });
 
     console.log('Seeding completed successfully');
